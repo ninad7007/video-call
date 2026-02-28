@@ -4,11 +4,218 @@ import { useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import {
   LiveKitRoom,
-  VideoConference,
   PreJoin,
+  RoomAudioRenderer,
+  ConnectionStateToast,
+  TrackToggle,
+  DisconnectButton,
+  StartMediaButton,
+  VideoTrack,
+  useTracks,
+  useParticipants,
   type LocalUserChoices,
 } from '@livekit/components-react';
+import { Track } from 'livekit-client';
+import { isTrackReference } from '@livekit/components-core';
 import '@livekit/components-styles';
+
+function MeetLayout() {
+  const tracks = useTracks(
+    [
+      { source: Track.Source.Camera, withPlaceholder: true },
+      { source: Track.Source.Microphone, withPlaceholder: false },
+    ],
+    { onlySubscribed: false },
+  );
+
+  const participants = useParticipants();
+  const localParticipant = participants.find((p) => p.isLocal);
+  const remoteParticipant = participants.find((p) => !p.isLocal);
+
+  const localTrack = tracks.find(
+    (t) =>
+      t.participant?.isLocal && t.source === Track.Source.Camera,
+  );
+  const remoteTrack = tracks.find(
+    (t) =>
+      !t.participant?.isLocal && t.source === Track.Source.Camera,
+  );
+
+  const localHasVideo =
+    localTrack && isTrackReference(localTrack) && localParticipant?.isCameraEnabled;
+  const remoteHasVideo =
+    remoteTrack && isTrackReference(remoteTrack) && remoteParticipant?.isCameraEnabled;
+
+  return (
+    <div
+      data-lk-theme="default"
+      style={{
+        height: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#1a1a2e',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Main area — remote video or waiting message */}
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1rem',
+        }}
+      >
+        {remoteParticipant ? (
+          remoteHasVideo ? (
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                maxWidth: '960px',
+                borderRadius: '12px',
+                overflow: 'hidden',
+                background: '#000',
+              }}
+            >
+              <VideoTrack
+                trackRef={remoteTrack}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            </div>
+          ) : (
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                maxWidth: '960px',
+                borderRadius: '12px',
+                background: '#2d2d44',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '1rem',
+              }}
+            >
+              <div
+                style={{
+                  width: '120px',
+                  height: '120px',
+                  borderRadius: '50%',
+                  background: '#5b5b8a',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="8" r="4" fill="#d1d5db" />
+                  <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="#d1d5db" />
+                </svg>
+              </div>
+              <span style={{ color: '#d1d5db', fontSize: '1.125rem', fontWeight: 500 }}>
+                {remoteParticipant.name || 'Participant'}
+              </span>
+            </div>
+          )
+        ) : (
+          <p style={{ color: '#9ca3af', fontSize: '1.125rem' }}>
+            Waiting for someone to join...
+          </p>
+        )}
+      </div>
+
+      {/* Local PiP — bottom-right */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: '5.5rem',
+          right: '1rem',
+          width: '8rem',
+          height: '10.5rem',
+          borderRadius: '12px',
+          overflow: 'hidden',
+          background: '#2d2d44',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+        }}
+      >
+        {localHasVideo ? (
+          <VideoTrack
+            trackRef={localTrack}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              transform: 'scaleX(-1)',
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.25rem',
+            }}
+          >
+            <div
+              style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '50%',
+                background: '#5b5b8a',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="8" r="4" fill="#d1d5db" />
+                <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="#d1d5db" />
+              </svg>
+            </div>
+            <span style={{ color: '#d1d5db', fontSize: '0.625rem', fontWeight: 500 }}>
+              {localParticipant?.name || 'You'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Control bar — bottom center */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          gap: '0.75rem',
+          padding: '1rem',
+        }}
+      >
+        <TrackToggle source={Track.Source.Microphone} />
+        <TrackToggle source={Track.Source.Camera} />
+        <DisconnectButton
+          style={{
+            background: '#ea4335',
+            borderRadius: '24px',
+            padding: '0.5rem 1.25rem',
+          }}
+        >
+          Leave
+        </DisconnectButton>
+      </div>
+
+      <RoomAudioRenderer />
+      <ConnectionStateToast />
+      <StartMediaButton />
+    </div>
+  );
+}
 
 export default function RoomPage() {
   const params = useParams<{ slug: string }>();
@@ -54,7 +261,7 @@ export default function RoomPage() {
     );
   }
 
-  // Connected state — show the video conference
+  // Connected state — show the Meet-style layout
   if (token) {
     return (
       <LiveKitRoom
@@ -70,9 +277,8 @@ export default function RoomPage() {
           },
           adaptiveStream: true,
         }}
-        style={{ height: '100vh' }}
       >
-        <VideoConference />
+        <MeetLayout />
       </LiveKitRoom>
     );
   }
