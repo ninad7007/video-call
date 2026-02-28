@@ -12,14 +12,58 @@ export default function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-4">
-      <h1 className="text-4xl font-bold">Video Call</h1>
-      <p className="text-gray-400 text-center max-w-md">
+    <main
+      style={{
+        minHeight: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '1.5rem',
+        padding: '1.5rem',
+      }}
+    >
+      <h1
+        style={{
+          fontSize: 'clamp(2rem, 5vw, 3rem)',
+          fontWeight: 500,
+          color: 'var(--text-primary)',
+          letterSpacing: '-0.02em',
+        }}
+      >
+        Oasis
+      </h1>
+      <p
+        style={{
+          color: 'var(--text-secondary)',
+          fontSize: '1rem',
+          textAlign: 'center',
+          maxWidth: '24rem',
+        }}
+      >
         Lightweight, low-bandwidth 1-on-1 video calls
       </p>
       <button
         onClick={startCall}
-        className="rounded-lg bg-blue-600 px-8 py-3 text-lg font-medium hover:bg-blue-500 transition-colors"
+        style={{
+          background: 'var(--accent)',
+          color: '#111',
+          border: 'none',
+          borderRadius: 'var(--radius-sm)',
+          padding: '14px 32px',
+          fontSize: '1rem',
+          fontWeight: 600,
+          cursor: 'pointer',
+          transition: 'var(--transition)',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--accent-hover)';
+          e.currentTarget.style.transform = 'scale(1.02)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'var(--accent)';
+          e.currentTarget.style.transform = 'scale(1)';
+        }}
       >
         Start Call
       </button>

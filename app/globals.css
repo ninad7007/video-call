@@ -1,1 +1,29 @@
 @import "tailwindcss";
+
+:root {
+  --bg-primary: #111111;
+  --bg-elevated: #1a1a1a;
+  --bg-surface: #222222;
+  --accent: #E5A54B;
+  --accent-hover: #f0b45e;
+  --text-primary: #FAFAFA;
+  --text-secondary: #888888;
+  --text-muted: #666666;
+  --glass-bg: rgba(0, 0, 0, 0.5);
+  --glass-blur: blur(20px);
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-pill: 48px;
+  --transition: 150ms ease;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}

@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import {
   LiveKitRoom,
-  PreJoin,
   RoomAudioRenderer,
   ConnectionStateToast,
   TrackToggle,
@@ -13,11 +12,464 @@ import {
   VideoTrack,
   useTracks,
   useParticipants,
-  type LocalUserChoices,
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { isTrackReference } from '@livekit/components-core';
 import '@livekit/components-styles';
+
+/* ------------------------------------------------------------------ */
+/*  CustomPreJoin                                                      */
+/* ------------------------------------------------------------------ */
+
+interface PreJoinSettings {
+  username: string;
+  cameraOn: boolean;
+  micOn: boolean;
+}
+
+interface CustomPreJoinProps {
+  onJoin: (settings: PreJoinSettings) => void;
+  onCopyLink: () => void;
+  error?: string;
+}
+
+function CustomPreJoin({ onJoin, onCopyLink, error }: CustomPreJoinProps) {
+  const router = useRouter();
+
+  // Form state
+  const [username, setUsername] = useState('');
+
+  // Device state
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCamera, setSelectedCamera] = useState('');
+  const [selectedMic, setSelectedMic] = useState('');
+  const [cameraOn, setCameraOn] = useState(true);
+  const [micOn, setMicOn] = useState(true);
+
+  // Refs
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  // Acquire / replace media stream whenever device selection or toggle changes
+  useEffect(() => {
+    let cancelled = false;
+
+    async function acquireStream() {
+      // Stop previous tracks
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+
+      // If both off, nothing to acquire
+      if (!cameraOn && !micOn) {
+        if (videoRef.current) videoRef.current.srcObject = null;
+        return;
+      }
+
+      try {
+        const constraints: MediaStreamConstraints = {};
+        if (cameraOn) {
+          constraints.video = selectedCamera
+            ? { deviceId: { exact: selectedCamera } }
+            : true;
+        }
+        if (micOn) {
+          constraints.audio = selectedMic
+            ? { deviceId: { exact: selectedMic } }
+            : true;
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = cameraOn ? stream : null;
+        }
+      } catch {
+        // Permission denied or device unavailable — degrade gracefully
+      }
+    }
+
+    acquireStream();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cameraOn, micOn, selectedCamera, selectedMic]);
+
+  // Enumerate devices once on mount (after first getUserMedia grants labels)
+  useEffect(() => {
+    async function enumerate() {
+      try {
+        // Need an initial getUserMedia to get labelled devices in most browsers
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        tempStream.getTracks().forEach((t) => t.stop());
+      } catch {
+        // ignore
+      }
+
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        setCameras(devices.filter((d) => d.kind === 'videoinput'));
+        setMics(devices.filter((d) => d.kind === 'audioinput'));
+      } catch {
+        // ignore
+      }
+    }
+    enumerate();
+  }, []);
+
+  // Cleanup all tracks on unmount
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!username.trim()) return;
+    // Stop preview tracks before joining
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    onJoin({ username: username.trim(), cameraOn, micOn });
+  }
+
+  return (
+    <div
+      style={{
+        minHeight: '100dvh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '2rem 1rem',
+        position: 'relative',
+        background: 'var(--bg-primary)',
+      }}
+    >
+      {/* Back arrow */}
+      <button
+        onClick={() => router.push('/')}
+        aria-label="Back to home"
+        style={{
+          position: 'absolute',
+          top: '1rem',
+          left: '1rem',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          opacity: 0.6,
+          transition: 'opacity var(--transition)',
+          padding: '4px',
+        }}
+        onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.opacity = '1')}
+        onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.opacity = '0.6')}
+      >
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
+
+      {/* Main flex container */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '2rem',
+          maxWidth: '900px',
+          width: '100%',
+        }}
+      >
+        {/* Camera preview */}
+        <div
+          style={{
+            flex: 3,
+            minWidth: '300px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-elevated)',
+            overflow: 'hidden',
+            position: 'relative',
+            aspectRatio: undefined,
+          }}
+        >
+          <style>{`
+            .prejoin-camera-preview {
+              min-height: 320px;
+            }
+            @media (max-width: 768px) {
+              .prejoin-camera-preview {
+                aspect-ratio: 4 / 3;
+                min-height: unset;
+              }
+            }
+          `}</style>
+          <div
+            className="prejoin-camera-preview"
+            style={{
+              width: '100%',
+              height: '100%',
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {cameraOn ? (
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  transform: 'scaleX(-1)',
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'var(--bg-elevated)',
+                }}
+              >
+                <div
+                  style={{
+                    width: '96px',
+                    height: '96px',
+                    borderRadius: '50%',
+                    background: '#5b5b8a',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <svg width="52" height="52" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="8" r="4" fill="#d1d5db" />
+                    <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="#d1d5db" />
+                  </svg>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Form panel */}
+        <form
+          onSubmit={handleSubmit}
+          style={{
+            flex: 2,
+            minWidth: '280px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1.25rem',
+            justifyContent: 'center',
+          }}
+        >
+          {error && (
+            <p
+              style={{
+                background: 'rgba(153,27,27,0.5)',
+                color: '#fca5a5',
+                borderRadius: 'var(--radius-sm)',
+                padding: '0.5rem 1rem',
+              }}
+            >
+              {error}
+            </p>
+          )}
+
+          {/* Name input */}
+          <input
+            type="text"
+            placeholder="Your name"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+            style={{
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-primary)',
+              padding: '12px 14px',
+              fontSize: '1.1rem',
+              outline: 'none',
+              width: '100%',
+              transition: 'border-color var(--transition)',
+            }}
+            onFocus={(e) =>
+              (e.currentTarget.style.borderColor = 'var(--accent)')
+            }
+            onBlur={(e) =>
+              (e.currentTarget.style.borderColor = 'var(--border-subtle)')
+            }
+          />
+
+          {/* Camera select */}
+          {cameras.length > 0 && (
+            <select
+              value={selectedCamera}
+              onChange={(e) => setSelectedCamera(e.target.value)}
+              style={{
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-primary)',
+                padding: '10px 12px',
+                width: '100%',
+              }}
+            >
+              {cameras.map((cam) => (
+                <option key={cam.deviceId} value={cam.deviceId}>
+                  {cam.label || `Camera ${cameras.indexOf(cam) + 1}`}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* Mic select */}
+          {mics.length > 0 && (
+            <select
+              value={selectedMic}
+              onChange={(e) => setSelectedMic(e.target.value)}
+              style={{
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-primary)',
+                padding: '10px 12px',
+                width: '100%',
+              }}
+            >
+              {mics.map((mic) => (
+                <option key={mic.deviceId} value={mic.deviceId}>
+                  {mic.label || `Microphone ${mics.indexOf(mic) + 1}`}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* Camera / mic toggle row */}
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button
+              type="button"
+              onClick={() => setCameraOn((v) => !v)}
+              style={{
+                background: 'var(--bg-surface)',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                padding: '8px 16px',
+                cursor: 'pointer',
+                opacity: cameraOn ? 1 : 0.5,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                color: 'var(--text-primary)',
+                transition: 'opacity var(--transition)',
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M23 7l-7 5 7 5V7z" />
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+              </svg>
+              {cameraOn ? 'Cam On' : 'Cam Off'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMicOn((v) => !v)}
+              style={{
+                background: 'var(--bg-surface)',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                padding: '8px 16px',
+                cursor: 'pointer',
+                opacity: micOn ? 1 : 0.5,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                color: 'var(--text-primary)',
+                transition: 'opacity var(--transition)',
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+              {micOn ? 'Mic On' : 'Mic Off'}
+            </button>
+          </div>
+
+          {/* Join button */}
+          <button
+            type="submit"
+            disabled={!username.trim()}
+            style={{
+              background: 'var(--accent)',
+              color: '#111',
+              border: 'none',
+              borderRadius: 'var(--radius-sm)',
+              padding: '14px 32px',
+              fontWeight: 600,
+              fontSize: '1rem',
+              cursor: username.trim() ? 'pointer' : 'not-allowed',
+              opacity: username.trim() ? 1 : 0.6,
+              transition: 'background var(--transition), transform var(--transition)',
+            }}
+            onMouseEnter={(e) => {
+              if (username.trim()) {
+                (e.currentTarget as HTMLButtonElement).style.background = 'var(--accent-hover)';
+                (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'var(--accent)';
+              (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)';
+            }}
+          >
+            Join call
+          </button>
+
+          {/* Copy invite link */}
+          <button
+            type="button"
+            onClick={onCopyLink}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-secondary)',
+              textDecoration: 'underline',
+              fontSize: '0.875rem',
+              cursor: 'pointer',
+              padding: 0,
+              textAlign: 'center',
+            }}
+          >
+            Copy invite link
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 function MeetLayout() {
   const tracks = useTracks(
@@ -51,48 +503,31 @@ function MeetLayout() {
       data-lk-theme="default"
       style={{
         height: '100dvh',
-        display: 'flex',
-        flexDirection: 'column',
-        background: '#1a1a2e',
         position: 'relative',
         overflow: 'hidden',
+        background: 'var(--bg-primary)',
       }}
     >
-      {/* Main area — remote video or waiting message */}
+      {/* Remote video — full viewport */}
       <div
         style={{
-          flex: 1,
+          position: 'absolute',
+          inset: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: '1rem',
+          background: 'var(--bg-primary)',
         }}
       >
         {remoteParticipant ? (
           remoteHasVideo ? (
-            <div
-              style={{
-                width: '100%',
-                height: '100%',
-                maxWidth: '960px',
-                borderRadius: '12px',
-                overflow: 'hidden',
-                background: '#000',
-              }}
-            >
-              <VideoTrack
-                trackRef={remoteTrack}
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
-            </div>
+            <VideoTrack
+              trackRef={remoteTrack}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
           ) : (
             <div
               style={{
-                width: '100%',
-                height: '100%',
-                maxWidth: '960px',
-                borderRadius: '12px',
-                background: '#2d2d44',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -105,41 +540,60 @@ function MeetLayout() {
                   width: '120px',
                   height: '120px',
                   borderRadius: '50%',
-                  background: '#5b5b8a',
+                  background: 'var(--bg-surface)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
                 <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="8" r="4" fill="#d1d5db" />
-                  <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="#d1d5db" />
+                  <circle cx="12" cy="8" r="4" fill="var(--text-secondary)" />
+                  <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="var(--text-secondary)" />
                 </svg>
               </div>
-              <span style={{ color: '#d1d5db', fontSize: '1.125rem', fontWeight: 500 }}>
+              <span style={{ color: 'var(--text-secondary)', fontSize: '1.125rem', fontWeight: 500 }}>
                 {remoteParticipant.name || 'Participant'}
               </span>
             </div>
           )
         ) : (
-          <p style={{ color: '#9ca3af', fontSize: '1.125rem' }}>
-            Waiting for someone to join...
-          </p>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              color: 'var(--text-secondary)',
+              fontSize: '1.125rem',
+            }}
+          >
+            <span>Waiting for someone to join</span>
+            <span
+              style={{
+                display: 'inline-block',
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                background: 'var(--text-secondary)',
+                animation: 'pulse-dot 1.5s ease-in-out infinite',
+              }}
+            />
+          </div>
         )}
       </div>
 
-      {/* Local PiP — bottom-right */}
+      {/* Local PiP — bottom-right, responsive */}
       <div
         style={{
           position: 'absolute',
-          bottom: '5.5rem',
-          right: '1rem',
-          width: '8rem',
-          height: '10.5rem',
-          borderRadius: '12px',
+          bottom: 'clamp(5rem, 12vh, 6rem)',
+          right: 'clamp(0.5rem, 2vw, 0.75rem)',
+          width: 'clamp(100px, 15vw, 180px)',
+          height: 'clamp(133px, 20vw, 240px)',
+          borderRadius: 'var(--radius-md)',
           overflow: 'hidden',
-          background: '#2d2d44',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border-subtle)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
         }}
       >
         {localHasVideo ? (
@@ -169,44 +623,62 @@ function MeetLayout() {
                 width: '48px',
                 height: '48px',
                 borderRadius: '50%',
-                background: '#5b5b8a',
+                background: 'var(--bg-surface)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="8" r="4" fill="#d1d5db" />
-                <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="#d1d5db" />
+                <circle cx="12" cy="8" r="4" fill="var(--text-secondary)" />
+                <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="var(--text-secondary)" />
               </svg>
             </div>
-            <span style={{ color: '#d1d5db', fontSize: '0.625rem', fontWeight: 500 }}>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.625rem', fontWeight: 500 }}>
               {localParticipant?.name || 'You'}
             </span>
           </div>
         )}
       </div>
 
-      {/* Control bar — bottom center */}
+      {/* Glass control bar — bottom center */}
       <div
         style={{
+          position: 'absolute',
+          bottom: 'clamp(1rem, 3vh, 1.5rem)',
+          left: '50%',
+          transform: 'translateX(-50%)',
           display: 'flex',
-          justifyContent: 'center',
           alignItems: 'center',
-          gap: '0.75rem',
-          padding: '1rem',
+          gap: 'clamp(0.5rem, 2vw, 0.75rem)',
+          padding: 'clamp(8px, 1.5vw, 12px) clamp(16px, 3vw, 24px)',
+          background: 'var(--glass-bg)',
+          backdropFilter: 'var(--glass-blur)',
+          WebkitBackdropFilter: 'var(--glass-blur)',
+          borderRadius: 'var(--radius-pill)',
+          border: '1px solid var(--border-subtle)',
         }}
       >
         <TrackToggle source={Track.Source.Microphone} />
         <TrackToggle source={Track.Source.Camera} />
         <DisconnectButton
           style={{
-            background: '#ea4335',
-            borderRadius: '24px',
-            padding: '0.5rem 1.25rem',
+            background: '#EA4335',
+            borderRadius: '50%',
+            width: 'clamp(40px, 6vw, 48px)',
+            height: 'clamp(40px, 6vw, 48px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            border: 'none',
+            cursor: 'pointer',
           }}
         >
-          Leave
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
+            <line x1="23" y1="1" x2="1" y2="23" />
+          </svg>
         </DisconnectButton>
       </div>
 
@@ -222,15 +694,19 @@ export default function RoomPage() {
   const slug = params.slug;
   const [token, setToken] = useState<string>('');
   const [error, setError] = useState<string>('');
+  const [preJoinCamera, setPreJoinCamera] = useState(true);
+  const [preJoinMic, setPreJoinMic] = useState(true);
 
   const liveKitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
 
   const handlePreJoinSubmit = useCallback(
-    async (values: LocalUserChoices) => {
+    async (settings: PreJoinSettings) => {
       setError('');
+      setPreJoinCamera(settings.cameraOn);
+      setPreJoinMic(settings.micOn);
       try {
         const res = await fetch(
-          `/api/token?roomName=${encodeURIComponent(slug)}&participantName=${encodeURIComponent(values.username)}`,
+          `/api/token?roomName=${encodeURIComponent(slug)}&participantName=${encodeURIComponent(settings.username)}`,
         );
         if (!res.ok) {
           const data = await res.json();
@@ -268,6 +744,8 @@ export default function RoomPage() {
         token={token}
         serverUrl={liveKitUrl}
         onDisconnected={handleDisconnected}
+        video={preJoinCamera}
+        audio={preJoinMic}
         options={{
           publishDefaults: {
             videoCodec: 'av1',
@@ -285,20 +763,10 @@ export default function RoomPage() {
 
   // Pre-join state — show name input + camera/mic preview
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-4">
-      {error && (
-        <p className="rounded bg-red-900/50 px-4 py-2 text-red-300">{error}</p>
-      )}
-      <PreJoin
-        onSubmit={handlePreJoinSubmit}
-        onError={(err) => setError(err.message)}
-      />
-      <button
-        onClick={copyLink}
-        className="text-sm text-gray-400 underline hover:text-gray-300"
-      >
-        Copy invite link
-      </button>
-    </div>
+    <CustomPreJoin
+      onJoin={handlePreJoinSubmit}
+      onCopyLink={copyLink}
+      error={error || undefined}
+    />
   );
 }
