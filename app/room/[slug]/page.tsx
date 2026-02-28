@@ -12,6 +12,7 @@ import {
   VideoTrack,
   useTracks,
   useParticipants,
+  useRoomContext,
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { isTrackReference } from '@livekit/components-core';
@@ -472,6 +473,18 @@ function CustomPreJoin({ onJoin, onCopyLink, error }: CustomPreJoinProps) {
 }
 
 function MeetLayout() {
+  const room = useRoomContext();
+  const [isHD, setIsHD] = useState(false);
+
+  async function toggleQuality() {
+    const newHD = !isHD;
+    setIsHD(newHD);
+    await room.localParticipant.republishAllTracks({
+      videoEncoding: { maxBitrate: newHD ? 1_500_000 : 400_000 },
+      videoCodec: 'av1',
+    }, false);
+  }
+
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -661,6 +674,30 @@ function MeetLayout() {
       >
         <TrackToggle source={Track.Source.Microphone} />
         <TrackToggle source={Track.Source.Camera} />
+        <button
+          type="button"
+          onClick={toggleQuality}
+          style={{
+            background: isHD ? 'var(--accent)' : 'rgba(255,255,255,0.15)',
+            color: isHD ? '#111' : '#fff',
+            borderRadius: '50%',
+            width: 'clamp(40px, 6vw, 48px)',
+            height: 'clamp(40px, 6vw, 48px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: 'clamp(11px, 1.5vw, 13px)',
+            fontWeight: 700,
+            letterSpacing: '0.5px',
+            transition: 'background var(--transition), color var(--transition)',
+          }}
+          title={isHD ? 'Switch to SD (400kbps)' : 'Switch to HD (1.5Mbps)'}
+        >
+          {isHD ? 'HD' : 'SD'}
+        </button>
         <DisconnectButton
           style={{
             background: '#EA4335',
