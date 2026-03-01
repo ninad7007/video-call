@@ -646,18 +646,24 @@ function GroupLayout() {
   );
 
   const participants = useParticipants();
+  const localParticipant = participants.find((p) => p.isLocal);
 
-  // Get camera tracks per participant
+  // Split tracks: local PiP + remote grid
   const cameraTracks = tracks.filter(
     (t) => t.source === Track.Source.Camera,
   );
+  const localTrack = cameraTracks.find((t) => t.participant?.isLocal);
+  const remoteTracks = cameraTracks.filter((t) => !t.participant?.isLocal);
 
-  const count = cameraTracks.length;
-  const { columns, rows: totalRows } = getGridDimensions(count);
+  const localHasVideo =
+    localTrack && isTrackReference(localTrack) && localParticipant?.isCameraEnabled;
+
+  const remoteCount = remoteTracks.length;
+  const { columns, rows: totalRows } = getGridDimensions(remoteCount);
 
   // Compute per-tile flex basis so the last row stretches to fill
-  const lastRowCount = count % columns || columns;
-  const tileStyles: React.CSSProperties[] = cameraTracks.map((_, i) => {
+  const lastRowCount = remoteCount % columns || columns;
+  const tileStyles: React.CSSProperties[] = remoteTracks.map((_, i) => {
     const row = Math.floor(i / columns);
     const isLastRow = row === totalRows - 1;
     const itemsInThisRow = isLastRow ? lastRowCount : columns;
@@ -687,7 +693,7 @@ function GroupLayout() {
           paddingBottom: 'clamp(4.5rem, 10vh, 5.5rem)',
         }}
       >
-        {count === 0 ? (
+        {remoteCount === 0 ? (
           <div
             style={{
               width: '100%',
@@ -720,7 +726,7 @@ function GroupLayout() {
             </div>
           </div>
         ) : (
-          cameraTracks.map((trackRef, i) => {
+          remoteTracks.map((trackRef, i) => {
             const participant = participants.find(
               (p) => p.identity === trackRef.participant?.identity,
             );
@@ -734,6 +740,66 @@ function GroupLayout() {
               />
             );
           })
+        )}
+      </div>
+
+      {/* Local PiP — bottom-right */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 'clamp(5rem, 12vh, 6rem)',
+          right: 'clamp(0.5rem, 2vw, 0.75rem)',
+          width: 'clamp(100px, 15vw, 180px)',
+          height: 'clamp(133px, 20vw, 240px)',
+          borderRadius: 'var(--radius-md)',
+          overflow: 'hidden',
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border-subtle)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+        }}
+      >
+        {localHasVideo ? (
+          <VideoTrack
+            trackRef={localTrack}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              transform: 'scaleX(-1)',
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.25rem',
+            }}
+          >
+            <div
+              style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '50%',
+                background: 'var(--bg-surface)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="8" r="4" fill="var(--text-secondary)" />
+                <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="var(--text-secondary)" />
+              </svg>
+            </div>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.625rem', fontWeight: 500 }}>
+              {localParticipant?.name || 'You'}
+            </span>
+          </div>
         )}
       </div>
 
