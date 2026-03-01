@@ -483,6 +483,36 @@ function MeetLayout() {
   const room = useRoomContext();
   const [isHD, setIsHD] = useState(false);
 
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const cameraIndexRef = useRef(0);
+
+  useEffect(() => {
+    async function enumerateCameras() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        setCameras(devices.filter((d) => d.kind === 'videoinput'));
+      } catch {
+        // ignore — single camera fallback
+      }
+    }
+    enumerateCameras();
+    navigator.mediaDevices.addEventListener('devicechange', enumerateCameras);
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', enumerateCameras);
+    };
+  }, []);
+
+  async function switchCamera() {
+    if (cameras.length < 2) return;
+    const nextIndex = (cameraIndexRef.current + 1) % cameras.length;
+    try {
+      await room.switchActiveDevice('videoinput', cameras[nextIndex].deviceId);
+      cameraIndexRef.current = nextIndex;
+    } catch {
+      // Device switch failed — index stays unchanged
+    }
+  }
+
   async function toggleQuality() {
     const newHD = !isHD;
     setIsHD(newHD);
@@ -681,6 +711,34 @@ function MeetLayout() {
       >
         <TrackToggle source={Track.Source.Microphone} />
         <TrackToggle source={Track.Source.Camera} />
+        {cameras.length >= 2 && (
+          <button
+            type="button"
+            onClick={switchCamera}
+            style={{
+              background: 'rgba(255,255,255,0.15)',
+              color: '#fff',
+              borderRadius: '50%',
+              width: 'clamp(40px, 6vw, 48px)',
+              height: 'clamp(40px, 6vw, 48px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+              border: 'none',
+              cursor: 'pointer',
+              transition: 'background var(--transition)',
+            }}
+            title="Switch camera"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+              <circle cx="12" cy="13" r="4" />
+              <path d="M17 2l-3 3 3 3" />
+              <path d="M7 2l3 3-3 3" />
+            </svg>
+          </button>
+        )}
         <button
           type="button"
           onClick={toggleQuality}
