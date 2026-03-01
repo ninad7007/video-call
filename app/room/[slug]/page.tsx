@@ -37,8 +37,13 @@ interface CustomPreJoinProps {
 function CustomPreJoin({ onJoin, onCopyLink, error }: CustomPreJoinProps) {
   const router = useRouter();
 
-  // Form state
-  const [username, setUsername] = useState('');
+  // Form state — restore saved name from localStorage
+  const [username, setUsername] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('oasis-username') || '';
+    }
+    return '';
+  });
 
   // Device state
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
@@ -139,6 +144,8 @@ function CustomPreJoin({ onJoin, onCopyLink, error }: CustomPreJoinProps) {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!username.trim()) return;
+    // Persist name for next visit
+    localStorage.setItem('oasis-username', username.trim());
     // Stop preview tracks before joining
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
