@@ -575,12 +575,47 @@ function ParticipantTile({ trackRef, participant, style }: ParticipantTileProps)
 /*  Grid helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-function getGridDimensions(count: number): { columns: number; rows: number } {
-  if (count <= 1) return { columns: 1, rows: 1 };
-  if (count <= 2) return { columns: 2, rows: 1 };
-  if (count <= 4) return { columns: 2, rows: 2 };
-  if (count <= 6) return { columns: 3, rows: 2 };
-  return { columns: 4, rows: 2 }; // 7-8
+const TILE_ASPECT_RATIO = 16 / 9;
+const GRID_GAP = 8;
+
+function computeGridLayout(
+  containerWidth: number,
+  containerHeight: number,
+  count: number,
+): { tileWidth: number; tileHeight: number; columns: number } {
+  if (count === 0) return { tileWidth: 0, tileHeight: 0, columns: 1 };
+
+  let bestLayout = { tileWidth: 0, tileHeight: 0, columns: 1 };
+  let bestArea = 0;
+
+  for (let cols = 1; cols <= count; cols++) {
+    const rows = Math.ceil(count / cols);
+    const availW = (containerWidth - GRID_GAP * (cols + 1)) / cols;
+    const availH = (containerHeight - GRID_GAP * (rows + 1)) / rows;
+
+    let tileW: number;
+    let tileH: number;
+
+    if (availW / availH > TILE_ASPECT_RATIO) {
+      // Cell is wider than 16:9 — constrain by height
+      tileH = availH;
+      tileW = tileH * TILE_ASPECT_RATIO;
+    } else {
+      // Cell is taller than 16:9 — constrain by width
+      tileW = availW;
+      tileH = tileW / TILE_ASPECT_RATIO;
+    }
+
+    if (tileW <= 0 || tileH <= 0) continue;
+
+    const totalArea = tileW * tileH * count;
+    if (totalArea > bestArea) {
+      bestArea = totalArea;
+      bestLayout = { tileWidth: Math.floor(tileW), tileHeight: Math.floor(tileH), columns: cols };
+    }
+  }
+
+  return bestLayout;
 }
 
 /* ------------------------------------------------------------------ */
@@ -659,20 +694,37 @@ function GroupLayout() {
     localTrack && isTrackReference(localTrack) && localParticipant?.isCameraEnabled;
 
   const remoteCount = remoteTracks.length;
-  const { columns, rows: totalRows } = getGridDimensions(remoteCount);
 
-  // Compute per-tile flex basis so the last row stretches to fill
-  const lastRowCount = remoteCount % columns || columns;
-  const tileStyles: React.CSSProperties[] = remoteTracks.map((_, i) => {
-    const row = Math.floor(i / columns);
-    const isLastRow = row === totalRows - 1;
-    const itemsInThisRow = isLastRow ? lastRowCount : columns;
+  // Measure grid container for Zoom-style layout
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [gridSize, setGridSize] = useState({ width: 0, height: 0 });
 
-    return {
-      flexBasis: `calc(${100 / itemsInThisRow}% - 4px)`,
-      height: `calc(${100 / totalRows}% - 4px)`,
-    };
-  });
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setGridSize({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const { tileWidth, tileHeight } = computeGridLayout(
+    gridSize.width,
+    gridSize.height,
+    remoteCount,
+  );
+
+  const tileStyle: React.CSSProperties = {
+    width: tileWidth > 0 ? `${tileWidth}px` : undefined,
+    height: tileHeight > 0 ? `${tileHeight}px` : undefined,
+  };
 
   return (
     <div
@@ -687,6 +739,7 @@ function GroupLayout() {
     >
       {/* Video grid */}
       <div
+        ref={gridRef}
         className="group-grid"
         style={{
           flex: 1,
@@ -726,7 +779,7 @@ function GroupLayout() {
             </div>
           </div>
         ) : (
-          remoteTracks.map((trackRef, i) => {
+          remoteTracks.map((trackRef) => {
             const participant = participants.find(
               (p) => p.identity === trackRef.participant?.identity,
             );
@@ -736,7 +789,7 @@ function GroupLayout() {
                 key={participant.identity}
                 trackRef={trackRef}
                 participant={participant}
-                style={tileStyles[i]}
+                style={tileStyle}
               />
             );
           })
@@ -964,6 +1017,7 @@ export default function RoomPage() {
         options={{
           publishDefaults: {
             videoCodec: 'av1',
+            backupCodec: true,
             videoEncoding: {
               maxBitrate: 800_000,
             },
