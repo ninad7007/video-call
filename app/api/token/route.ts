@@ -23,7 +23,8 @@ export async function GET(request: NextRequest) {
   }
 
   const at = new AccessToken(apiKey, apiSecret, {
-    identity: participantName,
+    identity: `${participantName}-${Date.now()}`,
+    name: participantName,
     ttl: '10m',
   });
 

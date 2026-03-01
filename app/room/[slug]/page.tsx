@@ -16,6 +16,7 @@ import {
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { isTrackReference } from '@livekit/components-core';
+import type { TrackReferenceOrPlaceholder } from '@livekit/components-react';
 import '@livekit/components-styles';
 
 /* ------------------------------------------------------------------ */
@@ -37,13 +38,14 @@ interface CustomPreJoinProps {
 function CustomPreJoin({ onJoin, onCopyLink, error }: CustomPreJoinProps) {
   const router = useRouter();
 
-  // Form state — restore saved name from localStorage
-  const [username, setUsername] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('oasis-username') || '';
-    }
-    return '';
-  });
+  // Form state
+  const [username, setUsername] = useState('');
+
+  // Restore saved name from localStorage after mount (avoids SSR hydration mismatch)
+  useEffect(() => {
+    const saved = localStorage.getItem('oasis-username');
+    if (saved) setUsername(saved);
+  }, []);
 
   // Device state
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
@@ -479,12 +481,118 @@ function CustomPreJoin({ onJoin, onCopyLink, error }: CustomPreJoinProps) {
   );
 }
 
-function MeetLayout() {
+/* ------------------------------------------------------------------ */
+/*  ParticipantTile                                                    */
+/* ------------------------------------------------------------------ */
+
+interface ParticipantTileProps {
+  trackRef: TrackReferenceOrPlaceholder;
+  participant: import('livekit-client').Participant;
+  style?: React.CSSProperties;
+}
+
+function ParticipantTile({ trackRef, participant, style }: ParticipantTileProps) {
+  const displayName = participant.name || (participant.isLocal ? 'You' : 'Participant');
+  const hasVideo =
+    isTrackReference(trackRef) && participant.isCameraEnabled;
+
+  return (
+    <div className="participant-tile" style={style}>
+      {hasVideo ? (
+        <VideoTrack
+          trackRef={trackRef}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            transform: participant.isLocal ? 'scaleX(-1)' : undefined,
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '0.5rem',
+            background: 'var(--bg-elevated)',
+          }}
+        >
+          <div
+            style={{
+              width: 'clamp(48px, 8vw, 96px)',
+              height: 'clamp(48px, 8vw, 96px)',
+              borderRadius: '50%',
+              background: 'var(--bg-surface)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <svg width="50%" height="50%" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="8" r="4" fill="var(--text-secondary)" />
+              <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="var(--text-secondary)" />
+            </svg>
+          </div>
+          <span
+            style={{
+              color: 'var(--text-secondary)',
+              fontSize: 'clamp(0.75rem, 1.5vw, 1rem)',
+              fontWeight: 500,
+            }}
+          >
+            {displayName}
+          </span>
+        </div>
+      )}
+
+      {/* Name overlay — always visible when video is on */}
+      {hasVideo && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '0.5rem',
+            left: '0.5rem',
+            background: 'rgba(0,0,0,0.6)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '2px 8px',
+            fontSize: 'clamp(0.625rem, 1.2vw, 0.8rem)',
+            color: 'var(--text-primary)',
+            fontWeight: 500,
+          }}
+        >
+          {displayName}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Grid helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+function getGridDimensions(count: number): { columns: number; rows: number } {
+  if (count <= 1) return { columns: 1, rows: 1 };
+  if (count <= 2) return { columns: 2, rows: 1 };
+  if (count <= 4) return { columns: 2, rows: 2 };
+  if (count <= 6) return { columns: 3, rows: 2 };
+  return { columns: 4, rows: 2 }; // 7-8
+}
+
+/* ------------------------------------------------------------------ */
+/*  GroupLayout                                                        */
+/* ------------------------------------------------------------------ */
+
+function GroupLayout() {
   const room = useRoomContext();
   const [isHD, setIsHD] = useState(false);
 
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
-  const cameraIndexRef = useRef(0);
+  const [cameraIndex, setCameraIndex] = useState(0);
 
   useEffect(() => {
     async function enumerateCameras() {
@@ -492,7 +600,7 @@ function MeetLayout() {
         const devices = await navigator.mediaDevices.enumerateDevices();
         setCameras(devices.filter((d) => d.kind === 'videoinput'));
       } catch {
-        // ignore — single camera fallback
+        // ignore
       }
     }
     enumerateCameras();
@@ -504,10 +612,10 @@ function MeetLayout() {
 
   async function switchCamera() {
     if (cameras.length < 2) return;
-    const nextIndex = (cameraIndexRef.current + 1) % cameras.length;
+    const nextIndex = (cameraIndex + 1) % cameras.length;
     try {
       await room.switchActiveDevice('videoinput', cameras[nextIndex].deviceId);
-      cameraIndexRef.current = nextIndex;
+      setCameraIndex(nextIndex);
     } catch {
       // Device switch failed — index stays unchanged
     }
@@ -515,11 +623,18 @@ function MeetLayout() {
 
   async function toggleQuality() {
     const newHD = !isHD;
-    setIsHD(newHD);
-    await room.localParticipant.republishAllTracks({
-      videoEncoding: { maxBitrate: newHD ? 1_500_000 : 400_000 },
-      videoCodec: 'av1',
-    }, false);
+    try {
+      await room.localParticipant.republishAllTracks(
+        {
+          videoEncoding: { maxBitrate: newHD ? 1_500_000 : 800_000 },
+          videoCodec: 'av1',
+        },
+        false,
+      );
+      setIsHD(newHD);
+    } catch {
+      // Republish failed — keep current quality state
+    }
   }
 
   const tracks = useTracks(
@@ -531,163 +646,94 @@ function MeetLayout() {
   );
 
   const participants = useParticipants();
-  const localParticipant = participants.find((p) => p.isLocal);
-  const remoteParticipant = participants.find((p) => !p.isLocal);
 
-  const localTrack = tracks.find(
-    (t) =>
-      t.participant?.isLocal && t.source === Track.Source.Camera,
-  );
-  const remoteTrack = tracks.find(
-    (t) =>
-      !t.participant?.isLocal && t.source === Track.Source.Camera,
+  // Get camera tracks per participant
+  const cameraTracks = tracks.filter(
+    (t) => t.source === Track.Source.Camera,
   );
 
-  const localHasVideo =
-    localTrack && isTrackReference(localTrack) && localParticipant?.isCameraEnabled;
-  const remoteHasVideo =
-    remoteTrack && isTrackReference(remoteTrack) && remoteParticipant?.isCameraEnabled;
+  const count = cameraTracks.length;
+  const { columns, rows: totalRows } = getGridDimensions(count);
+
+  // Compute per-tile flex basis so the last row stretches to fill
+  const lastRowCount = count % columns || columns;
+  const tileStyles: React.CSSProperties[] = cameraTracks.map((_, i) => {
+    const row = Math.floor(i / columns);
+    const isLastRow = row === totalRows - 1;
+    const itemsInThisRow = isLastRow ? lastRowCount : columns;
+
+    return {
+      flexBasis: `calc(${100 / itemsInThisRow}% - 4px)`,
+      height: `calc(${100 / totalRows}% - 4px)`,
+    };
+  });
 
   return (
     <div
       data-lk-theme="default"
       style={{
         height: '100dvh',
-        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
         overflow: 'hidden',
         background: 'var(--bg-primary)',
       }}
     >
-      {/* Remote video — full viewport */}
+      {/* Video grid */}
       <div
+        className="group-grid"
         style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'var(--bg-primary)',
+          flex: 1,
+          paddingBottom: 'clamp(4.5rem, 10vh, 5.5rem)',
         }}
       >
-        {remoteParticipant ? (
-          remoteHasVideo ? (
-            <VideoTrack
-              trackRef={remoteTrack}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            />
-          ) : (
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '1rem',
-              }}
-            >
-              <div
-                style={{
-                  width: '120px',
-                  height: '120px',
-                  borderRadius: '50%',
-                  background: 'var(--bg-surface)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="8" r="4" fill="var(--text-secondary)" />
-                  <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="var(--text-secondary)" />
-                </svg>
-              </div>
-              <span style={{ color: 'var(--text-secondary)', fontSize: '1.125rem', fontWeight: 500 }}>
-                {remoteParticipant.name || 'Participant'}
-              </span>
-            </div>
-          )
-        ) : (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              color: 'var(--text-secondary)',
-              fontSize: '1.125rem',
-            }}
-          >
-            <span>Waiting for someone to join</span>
-            <span
-              style={{
-                display: 'inline-block',
-                width: '6px',
-                height: '6px',
-                borderRadius: '50%',
-                background: 'var(--text-secondary)',
-                animation: 'pulse-dot 1.5s ease-in-out infinite',
-              }}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Local PiP — bottom-right, responsive */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 'clamp(5rem, 12vh, 6rem)',
-          right: 'clamp(0.5rem, 2vw, 0.75rem)',
-          width: 'clamp(100px, 15vw, 180px)',
-          height: 'clamp(133px, 20vw, 240px)',
-          borderRadius: 'var(--radius-md)',
-          overflow: 'hidden',
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border-subtle)',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-        }}
-      >
-        {localHasVideo ? (
-          <VideoTrack
-            trackRef={localTrack}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              transform: 'scaleX(-1)',
-            }}
-          />
-        ) : (
+        {count === 0 ? (
           <div
             style={{
               width: '100%',
               height: '100%',
               display: 'flex',
-              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '0.25rem',
             }}
           >
             <div
               style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '50%',
-                background: 'var(--bg-surface)',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center',
+                gap: '8px',
+                color: 'var(--text-secondary)',
+                fontSize: '1.125rem',
               }}
             >
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="8" r="4" fill="var(--text-secondary)" />
-                <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" fill="var(--text-secondary)" />
-              </svg>
+              <span>Waiting for someone to join</span>
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  background: 'var(--text-secondary)',
+                  animation: 'pulse-dot 1.5s ease-in-out infinite',
+                }}
+              />
             </div>
-            <span style={{ color: 'var(--text-secondary)', fontSize: '0.625rem', fontWeight: 500 }}>
-              {localParticipant?.name || 'You'}
-            </span>
           </div>
+        ) : (
+          cameraTracks.map((trackRef, i) => {
+            const participant = participants.find(
+              (p) => p.identity === trackRef.participant?.identity,
+            );
+            if (!participant) return null;
+            return (
+              <ParticipantTile
+                key={participant.identity}
+                trackRef={trackRef}
+                participant={participant}
+                style={tileStyles[i]}
+              />
+            );
+          })
         )}
       </div>
 
@@ -759,7 +805,7 @@ function MeetLayout() {
             letterSpacing: '0.5px',
             transition: 'background var(--transition), color var(--transition)',
           }}
-          title={isHD ? 'Switch to SD (400kbps)' : 'Switch to HD (1.5Mbps)'}
+          title={isHD ? 'Switch to SD (800kbps)' : 'Switch to HD (1.5Mbps)'}
         >
           {isHD ? 'HD' : 'SD'}
         </button>
@@ -839,7 +885,7 @@ export default function RoomPage() {
     );
   }
 
-  // Connected state — show the Meet-style layout
+  // Connected state — show the group grid layout
   if (token) {
     return (
       <LiveKitRoom
@@ -852,13 +898,14 @@ export default function RoomPage() {
           publishDefaults: {
             videoCodec: 'av1',
             videoEncoding: {
-              maxBitrate: 400_000,
+              maxBitrate: 800_000,
             },
           },
           adaptiveStream: true,
+          dynacast: true,
         }}
       >
-        <MeetLayout />
+        <GroupLayout />
       </LiveKitRoom>
     );
   }
