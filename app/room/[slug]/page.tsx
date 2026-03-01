@@ -572,20 +572,247 @@ function ParticipantTile({ trackRef, participant, style }: ParticipantTileProps)
 }
 
 /* ------------------------------------------------------------------ */
+/*  DraggablePiP                                                       */
+/* ------------------------------------------------------------------ */
+
+type Corner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+const PIP_MARGIN = 12;
+const PIP_SNAP_TRANSITION = 'top 0.3s ease, left 0.3s ease';
+
+function DraggablePiP({
+  children,
+  containerRef,
+}: {
+  children: React.ReactNode;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const pipRef = useRef<HTMLDivElement>(null);
+  const [corner, setCorner] = useState<Corner>('bottom-right');
+  const [dragging, setDragging] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [snappedPos, setSnappedPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const dragOffset = useRef({ x: 0, y: 0 });
+
+  // Keep snappedPos in sync with corner + container size via ResizeObserver
+  useEffect(() => {
+    const container = containerRef.current;
+    const pip = pipRef.current;
+    if (!container || !pip) return;
+
+    function update() {
+      const cRect = container!.getBoundingClientRect();
+      const pW = pip!.offsetWidth;
+      const pH = pip!.offsetHeight;
+      const bottomInset = parseFloat(
+        getComputedStyle(container!).paddingBottom || '0',
+      );
+
+      let newPos: { top: number; left: number };
+      switch (corner) {
+        case 'top-left':
+          newPos = { top: PIP_MARGIN, left: PIP_MARGIN };
+          break;
+        case 'top-right':
+          newPos = { top: PIP_MARGIN, left: cRect.width - pW - PIP_MARGIN };
+          break;
+        case 'bottom-left':
+          newPos = {
+            top: cRect.height - pH - bottomInset - PIP_MARGIN,
+            left: PIP_MARGIN,
+          };
+          break;
+        case 'bottom-right':
+          newPos = {
+            top: cRect.height - pH - bottomInset - PIP_MARGIN,
+            left: cRect.width - pW - PIP_MARGIN,
+          };
+          break;
+      }
+      setSnappedPos(newPos);
+    }
+    update();
+
+    const ro = new ResizeObserver(update);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [corner, containerRef]);
+
+  // Compute pixel position for a given corner
+  const getCornerPos = useCallback(
+    (c: Corner) => {
+      const container = containerRef.current;
+      const pip = pipRef.current;
+      if (!container || !pip) return { top: 0, left: 0 };
+
+      const cRect = container.getBoundingClientRect();
+      const pW = pip.offsetWidth;
+      const pH = pip.offsetHeight;
+
+      // Controls bar sits at the bottom — keep PiP above it
+      const bottomInset = parseFloat(
+        getComputedStyle(container).paddingBottom || '0',
+      );
+
+      switch (c) {
+        case 'top-left':
+          return { top: PIP_MARGIN, left: PIP_MARGIN };
+        case 'top-right':
+          return { top: PIP_MARGIN, left: cRect.width - pW - PIP_MARGIN };
+        case 'bottom-left':
+          return {
+            top: cRect.height - pH - bottomInset - PIP_MARGIN,
+            left: PIP_MARGIN,
+          };
+        case 'bottom-right':
+          return {
+            top: cRect.height - pH - bottomInset - PIP_MARGIN,
+            left: cRect.width - pW - PIP_MARGIN,
+          };
+      }
+    },
+    [containerRef],
+  );
+
+  // Find the nearest corner to a given {top, left} position
+  const findNearestCorner = useCallback(
+    (top: number, left: number): Corner => {
+      const corners: Corner[] = [
+        'top-left',
+        'top-right',
+        'bottom-left',
+        'bottom-right',
+      ];
+      let best: Corner = 'bottom-right';
+      let bestDist = Infinity;
+
+      for (const c of corners) {
+        const cp = getCornerPos(c);
+        const dist = Math.hypot(top - cp.top, left - cp.left);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = c;
+        }
+      }
+      return best;
+    },
+    [getCornerPos],
+  );
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const pip = pipRef.current;
+      if (!pip) return;
+
+      pip.setPointerCapture(e.pointerId);
+
+      const rect = pip.getBoundingClientRect();
+      const containerRect = containerRef.current?.getBoundingClientRect();
+      if (!containerRect) return;
+
+      dragOffset.current = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      };
+
+      // Set initial position in container-relative coords
+      setPos({
+        top: rect.top - containerRect.top,
+        left: rect.left - containerRect.left,
+      });
+      setDragging(true);
+    },
+    [containerRef],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragging) return;
+      const containerRect = containerRef.current?.getBoundingClientRect();
+      if (!containerRect) return;
+
+      const newTop = e.clientY - containerRect.top - dragOffset.current.y;
+      const newLeft = e.clientX - containerRect.left - dragOffset.current.x;
+
+      const pip = pipRef.current;
+      const clampedTop = Math.max(0, Math.min(newTop, containerRect.height - (pip?.offsetHeight ?? 0)));
+      const clampedLeft = Math.max(0, Math.min(newLeft, containerRect.width - (pip?.offsetWidth ?? 0)));
+      setPos({ top: clampedTop, left: clampedLeft });
+    },
+    [dragging, containerRef],
+  );
+
+  const handlePointerUp = useCallback(() => {
+    if (!dragging || !pos) return;
+    setDragging(false);
+
+    const nearest = findNearestCorner(pos.top, pos.left);
+    setCorner(nearest);
+    setPos(null); // Clear free position — snap to corner
+  }, [dragging, pos, findNearestCorner]);
+
+  // Resolve the current position: free drag position or snapped corner
+  const currentPos = pos ?? snappedPos;
+
+  return (
+    <div
+      ref={pipRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      style={{
+        position: 'absolute',
+        top: `${currentPos.top}px`,
+        left: `${currentPos.left}px`,
+        width: 'clamp(100px, 15vw, 180px)',
+        height: 'clamp(133px, 20vw, 240px)',
+        borderRadius: 'var(--radius-md)',
+        overflow: 'hidden',
+        background: 'var(--bg-elevated)',
+        border: '1px solid var(--border-subtle)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+        cursor: dragging ? 'grabbing' : 'grab',
+        touchAction: 'none',
+        userSelect: 'none',
+        transition: dragging ? 'none' : PIP_SNAP_TRANSITION,
+        zIndex: 10,
+      }}
+    >
+      <div style={{ pointerEvents: dragging ? 'none' : 'auto', width: '100%', height: '100%' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Grid helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-const TILE_ASPECT_RATIO = 16 / 9;
 const GRID_GAP = 8;
 
 function computeGridLayout(
   containerWidth: number,
   containerHeight: number,
   count: number,
-): { tileWidth: number; tileHeight: number; columns: number } {
-  if (count === 0) return { tileWidth: 0, tileHeight: 0, columns: 1 };
+): { tileWidth: number; tileHeight: number; columns: number; fillContainer: boolean } {
+  if (count === 0) return { tileWidth: 0, tileHeight: 0, columns: 1, fillContainer: false };
 
-  let bestLayout = { tileWidth: 0, tileHeight: 0, columns: 1 };
+  // Portrait mode with 1 remote participant — fill the full container
+  const isPortrait = containerHeight > containerWidth;
+  if (isPortrait && count === 1) {
+    return {
+      tileWidth: Math.floor(containerWidth - GRID_GAP * 2),
+      tileHeight: Math.floor(containerHeight - GRID_GAP * 2),
+      columns: 1,
+      fillContainer: true,
+    };
+  }
+
+  const TILE_ASPECT_RATIO = 16 / 9;
+  let bestLayout = { tileWidth: 0, tileHeight: 0, columns: 1, fillContainer: false };
   let bestArea = 0;
 
   for (let cols = 1; cols <= count; cols++) {
@@ -597,11 +824,9 @@ function computeGridLayout(
     let tileH: number;
 
     if (availW / availH > TILE_ASPECT_RATIO) {
-      // Cell is wider than 16:9 — constrain by height
       tileH = availH;
       tileW = tileH * TILE_ASPECT_RATIO;
     } else {
-      // Cell is taller than 16:9 — constrain by width
       tileW = availW;
       tileH = tileW / TILE_ASPECT_RATIO;
     }
@@ -611,7 +836,7 @@ function computeGridLayout(
     const totalArea = tileW * tileH * count;
     if (totalArea > bestArea) {
       bestArea = totalArea;
-      bestLayout = { tileWidth: Math.floor(tileW), tileHeight: Math.floor(tileH), columns: cols };
+      bestLayout = { tileWidth: Math.floor(tileW), tileHeight: Math.floor(tileH), columns: cols, fillContainer: false };
     }
   }
 
@@ -624,6 +849,7 @@ function computeGridLayout(
 
 function GroupLayout() {
   const room = useRoomContext();
+  const layoutRef = useRef<HTMLDivElement>(null);
   const [isHD, setIsHD] = useState(false);
 
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
@@ -715,19 +941,22 @@ function GroupLayout() {
     return () => ro.disconnect();
   }, []);
 
-  const { tileWidth, tileHeight } = computeGridLayout(
+  const { tileWidth, tileHeight, fillContainer } = computeGridLayout(
     gridSize.width,
     gridSize.height,
     remoteCount,
   );
 
-  const tileStyle: React.CSSProperties = {
-    width: tileWidth > 0 ? `${tileWidth}px` : undefined,
-    height: tileHeight > 0 ? `${tileHeight}px` : undefined,
-  };
+  const tileStyle: React.CSSProperties = fillContainer
+    ? { width: '100%', height: '100%' }
+    : {
+        width: tileWidth > 0 ? `${tileWidth}px` : undefined,
+        height: tileHeight > 0 ? `${tileHeight}px` : undefined,
+      };
 
   return (
     <div
+      ref={layoutRef}
       data-lk-theme="default"
       style={{
         height: '100dvh',
@@ -796,21 +1025,8 @@ function GroupLayout() {
         )}
       </div>
 
-      {/* Local PiP — bottom-right */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 'clamp(5rem, 12vh, 6rem)',
-          right: 'clamp(0.5rem, 2vw, 0.75rem)',
-          width: 'clamp(100px, 15vw, 180px)',
-          height: 'clamp(133px, 20vw, 240px)',
-          borderRadius: 'var(--radius-md)',
-          overflow: 'hidden',
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border-subtle)',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-        }}
-      >
+      {/* Local PiP — draggable, snaps to corners */}
+      <DraggablePiP containerRef={layoutRef}>
         {localHasVideo ? (
           <VideoTrack
             trackRef={localTrack}
@@ -854,7 +1070,7 @@ function GroupLayout() {
             </span>
           </div>
         )}
-      </div>
+      </DraggablePiP>
 
       {/* Glass control bar — bottom center */}
       <div
