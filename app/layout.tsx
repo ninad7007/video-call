@@ -5,8 +5,8 @@ import './globals.css';
 const dmSans = DM_Sans({ subsets: ['latin'], weight: ['400', '500', '600'] });
 
 export const metadata: Metadata = {
-  title: 'Oasis',
-  description: 'Lightweight 1-on-1 video calls',
+  title: 'Connekt',
+  description: 'Lightweight, low-bandwidth video calls',
 };
 
 export default function RootLayout({

@@ -31,7 +31,7 @@ export default function Home() {
           letterSpacing: '-0.02em',
         }}
       >
-        Oasis
+        Connekt
       </h1>
       <p
         style={{

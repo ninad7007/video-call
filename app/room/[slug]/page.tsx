@@ -43,7 +43,7 @@ function CustomPreJoin({ onJoin, onCopyLink, error }: CustomPreJoinProps) {
 
   // Restore saved name from localStorage after mount (avoids SSR hydration mismatch)
   useEffect(() => {
-    const saved = localStorage.getItem('oasis-username');
+    const saved = localStorage.getItem('connekt-username');
     if (saved) setUsername(saved);
   }, []);
 
@@ -147,7 +147,7 @@ function CustomPreJoin({ onJoin, onCopyLink, error }: CustomPreJoinProps) {
     e.preventDefault();
     if (!username.trim()) return;
     // Persist name for next visit
-    localStorage.setItem('oasis-username', username.trim());
+    localStorage.setItem('connekt-username', username.trim());
     // Stop preview tracks before joining
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
