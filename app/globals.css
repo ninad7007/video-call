@@ -18,7 +18,11 @@
   --transition: 150ms ease;
 }
 
-body {
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  height: 100dvh;
   background: var(--bg-primary);
   color: var(--text-primary);
 }

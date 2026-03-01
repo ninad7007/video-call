@@ -853,7 +853,7 @@ function GroupLayout() {
   const [isHD, setIsHD] = useState(false);
 
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
-  const [cameraIndex, setCameraIndex] = useState(0);
+  const [isFrontCamera, setIsFrontCamera] = useState(true);
 
   useEffect(() => {
     async function enumerateCameras() {
@@ -873,12 +873,32 @@ function GroupLayout() {
 
   async function switchCamera() {
     if (cameras.length < 2) return;
-    const nextIndex = (cameraIndex + 1) % cameras.length;
+    const wantFront = !isFrontCamera;
+
+    // Pick front vs rear primary camera by label heuristics
+    const target = cameras.find((cam) => {
+      const label = cam.label.toLowerCase();
+      if (wantFront) {
+        return label.includes('front');
+      }
+      // Rear primary: "back camera" without ultra/tele/wide qualifiers
+      return (
+        label.includes('back') &&
+        !label.includes('ultra') &&
+        !label.includes('tele') &&
+        !label.includes('wide')
+      );
+    });
+
+    // Fallback: if heuristics fail, pick first front or last back camera
+    const fallback = wantFront ? cameras[0] : cameras[cameras.length - 1];
+    const device = target || fallback;
+
     try {
-      await room.switchActiveDevice('videoinput', cameras[nextIndex].deviceId);
-      setCameraIndex(nextIndex);
+      await room.switchActiveDevice('videoinput', device.deviceId);
+      setIsFrontCamera(wantFront);
     } catch {
-      // Device switch failed — index stays unchanged
+      // Device switch failed
     }
   }
 

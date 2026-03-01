@@ -16,7 +16,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className={`${dmSans.className} min-h-screen`}>
+      <body className={dmSans.className}>
         {children}
       </body>
     </html>
