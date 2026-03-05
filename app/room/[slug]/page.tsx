@@ -489,9 +489,10 @@ interface ParticipantTileProps {
   trackRef: TrackReferenceOrPlaceholder;
   participant: import('livekit-client').Participant;
   style?: React.CSSProperties;
+  mirrorVideo?: boolean;
 }
 
-function ParticipantTile({ trackRef, participant, style }: ParticipantTileProps) {
+function ParticipantTile({ trackRef, participant, style, mirrorVideo }: ParticipantTileProps) {
   const displayName = participant.name || (participant.isLocal ? 'You' : 'Participant');
   const hasVideo =
     isTrackReference(trackRef) && participant.isCameraEnabled;
@@ -505,7 +506,7 @@ function ParticipantTile({ trackRef, participant, style }: ParticipantTileProps)
             width: '100%',
             height: '100%',
             objectFit: 'cover',
-            transform: participant.isLocal ? 'scaleX(-1)' : undefined,
+            transform: mirrorVideo ? 'scaleX(-1)' : undefined,
           }}
         />
       ) : (
@@ -800,8 +801,9 @@ function computeGridLayout(
 ): { tileWidth: number; tileHeight: number; columns: number; fillContainer: boolean } {
   if (count === 0) return { tileWidth: 0, tileHeight: 0, columns: 1, fillContainer: false };
 
-  // Portrait mode with 1 remote participant — fill the full container
   const isPortrait = containerHeight > containerWidth;
+
+  // Portrait mode with 1 remote participant — fill the full container
   if (isPortrait && count === 1) {
     return {
       tileWidth: Math.floor(containerWidth - GRID_GAP * 2),
@@ -811,6 +813,22 @@ function computeGridLayout(
     };
   }
 
+  // Portrait mode with multiple participants — evenly divide space (no 16:9 constraint)
+  // 2 participants: stacked vertically, 3+: 2-column grid (WhatsApp/FaceTime style)
+  if (isPortrait && count > 1) {
+    const cols = count === 2 ? 1 : 2;
+    const rows = Math.ceil(count / cols);
+    const tileW = Math.floor((containerWidth - GRID_GAP * (cols + 1)) / cols);
+    const tileH = Math.floor((containerHeight - GRID_GAP * (rows + 1)) / rows);
+    return {
+      tileWidth: tileW,
+      tileHeight: tileH,
+      columns: cols,
+      fillContainer: false,
+    };
+  }
+
+  // Landscape / desktop — use 16:9 aspect ratio constraint
   const TILE_ASPECT_RATIO = 16 / 9;
   let bestLayout = { tileWidth: 0, tileHeight: 0, columns: 1, fillContainer: false };
   let bestArea = 0;
@@ -1054,7 +1072,7 @@ function GroupLayout() {
               width: '100%',
               height: '100%',
               objectFit: 'cover',
-              transform: 'scaleX(-1)',
+              transform: isFrontCamera ? 'scaleX(-1)' : undefined,
             }}
           />
         ) : (
