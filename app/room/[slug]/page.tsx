@@ -926,7 +926,7 @@ function GroupLayout() {
       await room.localParticipant.republishAllTracks(
         {
           videoEncoding: { maxBitrate: newHD ? 1_500_000 : 800_000 },
-          videoCodec: 'av1',
+          videoCodec: 'vp8',
         },
         false,
       );
@@ -1270,8 +1270,7 @@ export default function RoomPage() {
         audio={preJoinMic}
         options={{
           publishDefaults: {
-            videoCodec: 'av1',
-            backupCodec: true,
+            videoCodec: 'vp8',
             videoEncoding: {
               maxBitrate: 800_000,
             },
