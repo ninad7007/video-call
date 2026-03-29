@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -496,16 +497,53 @@ function ParticipantTile({ trackRef, participant, style, mirrorVideo }: Particip
   const displayName = participant.name || (participant.isLocal ? 'You' : 'Participant');
   const hasVideo =
     isTrackReference(trackRef) && participant.isCameraEnabled;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isPortraitVideo, setIsPortraitVideo] = useState(false);
+
+  // Detect portrait video tracks via the <video> element's intrinsic dimensions
+  useEffect(() => {
+    if (!hasVideo) return;
+    const el = containerRef.current;
+    if (!el) return;
+    let videoEl: HTMLVideoElement | null = null;
+
+    function check() {
+      if (videoEl && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        setIsPortraitVideo(videoEl.videoHeight > videoEl.videoWidth);
+      }
+    }
+
+    function attachListeners() {
+      videoEl = el!.querySelector('video');
+      if (videoEl) {
+        videoEl.addEventListener('resize', check);
+        videoEl.addEventListener('loadedmetadata', check);
+        check();
+      }
+    }
+
+    const mo = new MutationObserver(attachListeners);
+    mo.observe(el, { childList: true, subtree: true });
+    attachListeners();
+
+    return () => {
+      mo.disconnect();
+      if (videoEl) {
+        videoEl.removeEventListener('resize', check);
+        videoEl.removeEventListener('loadedmetadata', check);
+      }
+    };
+  }, [hasVideo]);
 
   return (
-    <div className="participant-tile" style={style}>
+    <div ref={containerRef} className="participant-tile" style={style}>
       {hasVideo ? (
         <VideoTrack
           trackRef={trackRef}
           style={{
             width: '100%',
             height: '100%',
-            objectFit: 'cover',
+            objectFit: isPortraitVideo ? 'contain' : 'cover',
             transform: mirrorVideo ? 'scaleX(-1)' : undefined,
           }}
         />
@@ -946,6 +984,22 @@ function GroupLayout() {
 
   const participants = useParticipants();
   const localParticipant = participants.find((p) => p.isLocal);
+  const remoteParticipants = participants.filter((p) => !p.isLocal);
+
+  // Auto-leave when the other person disconnects from a 1-on-1 call
+  const hadRemoteRef = useRef(false);
+  useEffect(() => {
+    if (remoteParticipants.length > 0) {
+      hadRemoteRef.current = true;
+    }
+    if (hadRemoteRef.current && remoteParticipants.length === 0) {
+      // Other person left — disconnect after a brief delay to avoid race conditions
+      const timeout = setTimeout(() => {
+        room.disconnect();
+      }, 1500);
+      return () => clearTimeout(timeout);
+    }
+  }, [remoteParticipants.length, room]);
 
   // Split tracks: local PiP + remote grid
   const cameraTracks = tracks.filter(
@@ -1213,13 +1267,53 @@ function GroupLayout() {
 
 export default function RoomPage() {
   const params = useParams<{ slug: string }>();
+  const searchParams = useSearchParams();
   const slug = params.slug;
   const [token, setToken] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [preJoinCamera, setPreJoinCamera] = useState(true);
   const [preJoinMic, setPreJoinMic] = useState(true);
+  const autoJoinAttempted = useRef(false);
 
   const liveKitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+  const autoJoin = searchParams.get('autoJoin') === 'true';
+
+  // Auto-join: skip pre-join screen when coming from contacts call flow
+  useEffect(() => {
+    if (!autoJoin || autoJoinAttempted.current || token) return;
+    autoJoinAttempted.current = true;
+
+    async function joinAutomatically() {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+
+      let participantName = 'User';
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('username, display_name')
+          .eq('id', user.id)
+          .single();
+        participantName = profile?.display_name || profile?.username || user.user_metadata?.full_name || 'User';
+      }
+
+      try {
+        const res = await fetch(
+          `/api/token?roomName=${encodeURIComponent(slug)}&participantName=${encodeURIComponent(participantName)}`,
+        );
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Failed to get token');
+        }
+        const data = await res.json();
+        setToken(data.token);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to connect');
+      }
+    }
+
+    joinAutomatically();
+  }, [autoJoin, slug, token]);
 
   const handlePreJoinSubmit = useCallback(
     async (settings: PreJoinSettings) => {
@@ -1244,8 +1338,13 @@ export default function RoomPage() {
   );
 
   const handleDisconnected = useCallback(() => {
-    setToken('');
-  }, []);
+    if (autoJoin) {
+      // Came from contacts call flow — go home instead of showing pre-join
+      window.location.href = '/';
+    } else {
+      setToken('');
+    }
+  }, [autoJoin]);
 
   function copyLink() {
     navigator.clipboard.writeText(window.location.href);
@@ -1255,6 +1354,15 @@ export default function RoomPage() {
     return (
       <div className="flex min-h-screen items-center justify-center p-4">
         <p className="text-red-400">LiveKit URL not configured</p>
+      </div>
+    );
+  }
+
+  // Auto-join loading state
+  if (autoJoin && !token && !error) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100dvh', background: 'var(--bg-primary)' }}>
+        <p style={{ color: 'var(--text-secondary)' }}>Connecting...</p>
       </div>
     );
   }
