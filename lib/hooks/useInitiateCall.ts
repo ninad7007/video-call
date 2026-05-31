@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { nanoid } from 'nanoid'
 import { createClient } from '@/lib/supabase/client'
 
@@ -15,12 +15,22 @@ export function useInitiateCall(callerId: string | null) {
   const [outgoingCall, setOutgoingCall] = useState<OutgoingCallState | null>(null)
   const supabase = createClient()
 
+  // Unique per hook instance so a fast re-mount can't collide with the
+  // not-yet-removed previous channel (supabase.channel(name) returns the
+  // existing instance if any, and .on() after .subscribe() throws).
+  // Initialized inside the effect to keep render pure (per react-hooks/purity).
+  const instanceIdRef = useRef<string | null>(null)
+
   // Listen for callee's response
   useEffect(() => {
     if (!outgoingCall || !callerId) return
 
+    if (instanceIdRef.current === null) {
+      instanceIdRef.current = Math.random().toString(36).slice(2, 11)
+    }
+
     const channel = supabase
-      .channel('outgoing-call-status')
+      .channel(`outgoing-call-status:${callerId}:${instanceIdRef.current}`)
       .on(
         'postgres_changes',
         {

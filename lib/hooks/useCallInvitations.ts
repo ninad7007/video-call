@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 export type CallInvitation = {
@@ -17,11 +17,21 @@ export function useIncomingCalls(userId: string | null) {
   const [incomingCall, setIncomingCall] = useState<CallInvitation | null>(null)
   const supabase = createClient()
 
+  // Unique per hook instance so a fast re-mount can't collide with the
+  // not-yet-removed previous channel (supabase.channel(name) returns the
+  // existing instance if any, and .on() after .subscribe() throws).
+  // Initialized inside the effect to keep render pure (per react-hooks/purity).
+  const instanceIdRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (!userId) return
 
+    if (instanceIdRef.current === null) {
+      instanceIdRef.current = Math.random().toString(36).slice(2, 11)
+    }
+
     const channel = supabase
-      .channel('incoming-calls')
+      .channel(`incoming-calls:${userId}:${instanceIdRef.current}`)
       .on(
         'postgres_changes',
         {
