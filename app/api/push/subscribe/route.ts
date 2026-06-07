@@ -8,6 +8,22 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json()
 
+  // VoIP push token (native mobile — CallKit/PushKit on iOS)
+  if (body.voip_token) {
+    const { error } = await supabase.from('push_subscriptions').upsert(
+      {
+        user_id: user.id,
+        voip_token: body.voip_token,
+        token_type: body.token_type ?? 'apns_voip',
+        platform: body.platform ?? 'ios',
+        apns_env: body.apns_env ?? 'production',
+      },
+      { onConflict: 'user_id,voip_token' }
+    )
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true })
+  }
+
   // Expo push token (mobile)
   if (body.expo_token) {
     const { error } = await supabase.from('push_subscriptions').upsert(
