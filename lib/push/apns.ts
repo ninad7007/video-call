@@ -55,6 +55,11 @@ export async function sendVoipPush(params: {
         resolve({ ok: false, status, reason })
       })
       req.on('error', reject)
+      client.on('error', reject)
+      req.setTimeout(10_000, () => {
+        req.close()
+        reject(new Error('APNs request timed out'))
+      })
       req.end(body)
     })
   } finally {

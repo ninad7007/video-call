@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const webpush = require('web-push')
 import { createClient } from '@/lib/supabase/server'
-import { groupSubscriptions } from '@/lib/push/subscriptions'
+import { groupSubscriptions, type PushRow } from '@/lib/push/subscriptions'
 import { buildIncomingCallPayload, validateIncomingCallPayload } from '@/lib/push/voipPayload'
 import { sendVoipPush, isDeadTokenReason, type ApnsEnv } from '@/lib/push/apns'
 import { randomUUID } from 'node:crypto'
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ sent: 0 })
   }
 
-  const { webSubs, voipSubs } = groupSubscriptions(subscriptions as never[])
+  const { webSubs, voipSubs } = groupSubscriptions(subscriptions as unknown as PushRow[])
 
   if (type === 'ended') {
     // TODO (Task 13): send an end-call VoIP push to voipSubs to dismiss the
