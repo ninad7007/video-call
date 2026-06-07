@@ -15,7 +15,10 @@ beforeEach(() => {
 
 test('signs an ES256 JWT with kid + iss', () => {
   const token = buildApnsJwt({ now: 1_000 })
-  const decoded = jwt.decode(token, { complete: true }) as any
+  const decoded = jwt.decode(token, { complete: true }) as {
+    header: { alg: string; kid: string }
+    payload: { iss: string; iat: number }
+  }
   expect(decoded.header.alg).toBe('ES256')
   expect(decoded.header.kid).toBe('KEY123')
   expect(decoded.payload.iss).toBe('TEAM456')
