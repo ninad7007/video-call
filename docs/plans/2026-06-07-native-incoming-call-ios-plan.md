@@ -1050,3 +1050,44 @@ Expected: one `apns_voip` / `sandbox` row (the bug is fixed — previously 0).
 - **Spec coverage:** schema fix (Task 1), self-hosted APNs transport (Tasks 4–8), `expo-callkit-telecom` client + LiveKit audio (Tasks 10–14), uniform native UI (Task 14), answer/decline/cancel data flow (Tasks 11, 13), error handling + dead-token pruning + logging (Tasks 5, 8), prerequisites + manual device matrix (Tasks 15–16). iOS-only; Android explicitly deferred per spec.
 - **Known external-API risks (verify against the installed package, not memory):** exact export/event field names for `expo-callkit-telecom` (Tasks 12 Step 1, 13 Step 1) and the server-side end-call push shape (Task 13 Step 4). The core ring/answer/decline path does not depend on the end-call shape.
 - **APNs env** is resolved deterministically via `EXPO_PUBLIC_APNS_ENV` per EAS profile (no `__DEV__` guessing).
+
+---
+
+## Phase 2 API Correction (2026-06-08)
+
+After installing `expo-callkit-telecom@0.3.9` (Task 10) and reading its README + `.d.ts`, the real
+API differs from the assumptions baked into Tasks 12–14 below. The architecture is unchanged
+(APNs VoIP → expo-callkit-telecom → LiveKit); only the client wiring changes. **These corrections
+supersede the original Task 12–14 code blocks.** Task 11 is unaffected.
+
+**1. Answer/End events do NOT carry `serverCallId`/`metadata`.**
+`CallAnsweredEvent = { id, requestId }` and `CallEndedEvent = { id }`, where `id` is the
+OS-assigned `CallSession` UUID. To recover our `call_invitations` id and room slug, the handler
+must call `getActiveCallSession()` and read `session.incomingCallEvent.serverCallId` and
+`session.incomingCallEvent.metadata.roomSlug` (the backend already nests `metadata.roomSlug` in
+the VoIP payload — confirmed compatible with the README's documented shape).
+
+**2. The answer MUST be fulfilled or iOS times the call out.**
+There is a `fulfillAnswerCallTimeout` (default 30s). After the user answers, once LiveKit actually
+connects we must call `fulfillIncomingCallConnected(requestId)`; on connection failure call
+`failIncomingCallConnected(id, requestId)`. This means `requestId` (and the OS `id`) must be
+threaded from the root answer-listener to the room screen. Approach: pass them as query params
+`/room/[slug]?autoJoin=true&callRequestId=<requestId>&osCallId=<id>`, and have the room screen's
+existing `<LiveKitRoom>` callbacks drive them: `onConnected → fulfillIncomingCallConnected`,
+`onError → failIncomingCallConnected`, `onDisconnected → endCall(osCallId)` if still active.
+
+**3. Audio session — device-verify, do not guess.**
+The module owns `RTCAudioSession` (manual audio). The current app does NOT call
+`AudioSession.startAudioSession()` itself, but `@livekit/react-native`'s `<LiveKitRoom>` may manage
+the session internally. The exact coordination (`prepareAudioSessionForCall` / `restoreAudioSession`
+vs. letting LiveKit manage) is documented only in the library's `example/` app. **Do not add manual
+audio-session code speculatively.** Wire the call lifecycle first; in Phase 3 device testing, if
+two-way audio fails on answer, consult `example/client/` and add the minimal audio coordination then.
+
+**4. Token-updated event:** `VoIPPushTokenUpdatedEvent = { token?: string; type }` — `token` is
+`undefined` when invalidated, so only POST to the backend when `token` is present.
+
+**5. Caller-cancel push (Task 13 Step 3):** `cancelCall()` in mobile `useInitiateCall.ts` does not
+currently hold a session token; fetch it via `supabase.auth.getSession()` (as `initiateCall` does)
+before POSTing `type:'ended'`. The backend `type:'ended'` branch stays a stub until the library's
+server-end payload is confirmed; the 45s `incomingCallTimeout` remains the dismissal fallback.
