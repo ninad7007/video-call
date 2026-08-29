@@ -18,3 +18,19 @@ test('ignores apns_voip rows with no token', () => {
   const { voipSubs } = groupSubscriptions(rows as unknown as PushRow[])
   expect(voipSubs).toEqual([])
 })
+
+test('splits fcm rows out from apns_voip rows', () => {
+  const rows = [
+    { id: '1', voip_token: 'apns-tok', token_type: 'apns_voip' },
+    { id: '2', voip_token: 'fcm-tok', token_type: 'fcm', platform: 'android' },
+  ]
+  const { voipSubs, fcmSubs } = groupSubscriptions(rows as unknown as PushRow[])
+  expect(voipSubs.map(s => s.id)).toEqual(['1'])
+  expect(fcmSubs.map(s => s.id)).toEqual(['2'])
+})
+
+test('ignores fcm rows with no token', () => {
+  const rows = [{ id: '9', voip_token: null, token_type: 'fcm' }]
+  const { fcmSubs } = groupSubscriptions(rows as unknown as PushRow[])
+  expect(fcmSubs).toEqual([])
+})

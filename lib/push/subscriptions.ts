@@ -11,6 +11,7 @@ export interface PushRow {
 
 export function groupSubscriptions(rows: PushRow[]) {
   const voipSubs = rows.filter((s) => s.token_type === 'apns_voip' && !!s.voip_token)
+  const fcmSubs = rows.filter((s) => s.token_type === 'fcm' && !!s.voip_token)
   const webSubs = rows.filter((s) => !!s.endpoint && !s.voip_token)
-  return { webSubs, voipSubs }
+  return { webSubs, voipSubs, fcmSubs }
 }

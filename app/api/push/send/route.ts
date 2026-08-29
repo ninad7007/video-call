@@ -5,6 +5,8 @@ import { createClientFromRequest } from '@/lib/supabase/server'
 import { groupSubscriptions, type PushRow } from '@/lib/push/subscriptions'
 import { buildIncomingCallPayload, validateIncomingCallPayload } from '@/lib/push/voipPayload'
 import { sendVoipPush, isDeadTokenReason, type ApnsEnv } from '@/lib/push/apns'
+import { sendFcmDataMessage } from '@/lib/push/fcm'
+import { isDeadFcmReason } from '@/lib/push/fcmPayload'
 import { randomUUID } from 'node:crypto'
 
 export const runtime = 'nodejs'
@@ -40,7 +42,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ sent: 0 })
   }
 
-  const { webSubs, voipSubs } = groupSubscriptions(subscriptions as unknown as PushRow[])
+  const { webSubs, voipSubs, fcmSubs } = groupSubscriptions(subscriptions as unknown as PushRow[])
 
   if (type === 'ended') {
     // Deliberately a no-op: PushKit reports *every* VoIP push to CallKit as a
@@ -117,6 +119,39 @@ export async function POST(request: NextRequest) {
       }
     } catch (err) {
       console.error('[push/send] APNs VoIP threw', { id: sub.id, err: String(err) })
+    }
+  }
+
+  // --- FCM data message (Android Core-Telecom) ---
+  // Same event shape as the VoIP push; the module's messaging service reports
+  // it to Core-Telecom exactly as PushKit does on iOS.
+  for (const sub of fcmSubs) {
+    const payload = buildIncomingCallPayload({
+      eventId: randomUUID(),
+      callInvitationId,
+      callerId: user.id,
+      callerName,
+      roomSlug: invitation.room_slug,
+    })
+    const errors = validateIncomingCallPayload(payload)
+    if (errors.length) {
+      console.error('[push/send] invalid FCM payload, skipping', { callInvitationId, errors })
+      continue
+    }
+    try {
+      const res = await sendFcmDataMessage({ deviceToken: sub.voip_token!, payload })
+      if (res.ok) {
+        sent++
+      } else {
+        console.error('[push/send] FCM failed', { id: sub.id, status: res.status, reason: res.reason })
+        if (isDeadFcmReason(res.status, res.reason)) {
+          await supabase.from('push_subscriptions').delete().eq('id', sub.id)
+        }
+      }
+    } catch (err) {
+      // Missing FCM credentials land here — log, don't fail the whole request,
+      // so an iOS call still succeeds when Android isn't configured yet.
+      console.error('[push/send] FCM threw', { id: sub.id, err: String(err) })
     }
   }
 
