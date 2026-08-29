@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const webpush = require('web-push')
-import { createClient } from '@/lib/supabase/server'
+import { createClientFromRequest } from '@/lib/supabase/server'
 import { groupSubscriptions, type PushRow } from '@/lib/push/subscriptions'
 import { buildIncomingCallPayload, validateIncomingCallPayload } from '@/lib/push/voipPayload'
 import { sendVoipPush, isDeadTokenReason, type ApnsEnv } from '@/lib/push/apns'
@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 export const runtime = 'nodejs'
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
+  const supabase = await createClientFromRequest(request)
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -43,10 +43,11 @@ export async function POST(request: NextRequest) {
   const { webSubs, voipSubs } = groupSubscriptions(subscriptions as unknown as PushRow[])
 
   if (type === 'ended') {
-    // TODO (Task 13): send an end-call VoIP push to voipSubs to dismiss the
-    // CallKit ring on cancel. The exact end-call push shape must be confirmed
-    // against the installed expo-callkit-telecom version first; until then the
-    // 45s incomingCallTimeout is the dismissal fallback.
+    // Deliberately a no-op: PushKit reports *every* VoIP push to CallKit as a
+    // new incoming call (Apple terminates the app otherwise), so an "end call"
+    // push would ring the callee a second time rather than dismiss the first.
+    // The callee tears the native call down itself by watching the invitation
+    // row — see watchForCallerCancel in the mobile app's app/_layout.tsx.
     return NextResponse.json({ sent: 0 })
   }
 
