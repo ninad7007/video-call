@@ -9,6 +9,7 @@ export type CallInvitation = {
   callee_id: string
   room_slug: string
   status: string
+  ringing_at: string | null
   created_at: string
   caller_profile?: { username: string; display_name: string }
 }
@@ -42,6 +43,16 @@ export function useIncomingCalls(userId: string | null) {
         },
         async (payload) => {
           const invitation = payload.new as CallInvitation
+
+          // Tells the caller this device is ringing ("Ringing..." rather than
+          // "Calling..."). Same protocol as the mobile app.
+          void supabase
+            .from('call_invitations')
+            .update({ ringing_at: new Date().toISOString() })
+            .eq('id', invitation.id)
+            .eq('status', 'ringing')
+            .is('ringing_at', null)
+            .then(() => {})
 
           const { data: callerProfile } = await supabase
             .from('profiles')

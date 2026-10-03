@@ -9,6 +9,8 @@ type OutgoingCallState = {
   roomSlug: string
   calleeName: string
   status: 'ringing' | 'accepted' | 'declined' | 'missed' | 'cancelled'
+  // A callee device acknowledged the call (ringing_at).
+  delivered?: boolean
 }
 
 export function useInitiateCall(callerId: string | null) {
@@ -40,10 +42,16 @@ export function useInitiateCall(callerId: string | null) {
           filter: `caller_id=eq.${callerId}`,
         },
         (payload) => {
-          const updated = payload.new as { id: string; status: string }
+          const updated = payload.new as { id: string; status: string; ringing_at: string | null }
           if (updated.id !== outgoingCall.invitationId) return
           setOutgoingCall((prev) =>
-            prev ? { ...prev, status: updated.status as OutgoingCallState['status'] } : null
+            prev
+              ? {
+                  ...prev,
+                  status: updated.status as OutgoingCallState['status'],
+                  delivered: prev.delivered || !!updated.ringing_at,
+                }
+              : null
           )
         }
       )

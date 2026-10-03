@@ -383,7 +383,7 @@ export default function HomePage() {
           <p style={{ color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>
             @{outgoingCall.calleeName}
           </p>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', margin: 0 }}>Calling...</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', margin: 0 }}>{outgoingCall.delivered ? 'Ringing...' : 'Calling...'}</p>
           <button onClick={cancelCall} style={{
             width: '64px', height: '64px', borderRadius: '50%', marginTop: '16px',
             background: '#ef4444', border: 'none', cursor: 'pointer',

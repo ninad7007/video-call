@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   // require status='ringing'; for 'ended' (caller cancelled) any status is fine.
   const baseQuery = supabase
     .from('call_invitations')
-    .select('id, callee_id, room_slug')
+    .select('id, callee_id, room_slug, has_video')
     .eq('id', callInvitationId)
     .eq('caller_id', user.id)
   const { data: invitation } =
@@ -97,6 +97,7 @@ export async function POST(request: NextRequest) {
       callerId: user.id,
       callerName,
       roomSlug: invitation.room_slug,
+      hasVideo: invitation.has_video,
     })
     const errors = validateIncomingCallPayload(payload)
     if (errors.length) {
@@ -132,6 +133,7 @@ export async function POST(request: NextRequest) {
       callerId: user.id,
       callerName,
       roomSlug: invitation.room_slug,
+      hasVideo: invitation.has_video,
     })
     const errors = validateIncomingCallPayload(payload)
     if (errors.length) {
