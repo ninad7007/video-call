@@ -15,10 +15,15 @@ import {
   useParticipants,
   useRoomContext,
 } from '@livekit/components-react';
-import { Track } from 'livekit-client';
+import { LocalVideoTrack, Track, VideoPresets } from 'livekit-client';
 import { isTrackReference } from '@livekit/components-core';
 import type { TrackReferenceOrPlaceholder } from '@livekit/components-react';
 import '@livekit/components-styles';
+
+const VIDEO_QUALITY = {
+  sd: { resolution: VideoPresets.h540.resolution, maxBitrate: 500_000 },
+  hd: { resolution: VideoPresets.h720.resolution, maxBitrate: 1_500_000 },
+};
 
 /* ------------------------------------------------------------------ */
 /*  CustomPreJoin                                                      */
@@ -960,10 +965,18 @@ function GroupLayout() {
 
   async function toggleQuality() {
     const newHD = !isHD;
+    const quality = newHD ? VIDEO_QUALITY.hd : VIDEO_QUALITY.sd;
     try {
+      // Recapture at the new resolution before republishing so the simulcast
+      // layers are computed from the new dimensions. A muted camera is left
+      // stopped rather than turned back on.
+      const cam = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+      if (cam instanceof LocalVideoTrack && !cam.isMuted) {
+        await cam.restartTrack({ deviceId: await cam.getDeviceId(), resolution: quality.resolution });
+      }
       await room.localParticipant.republishAllTracks(
         {
-          videoEncoding: { maxBitrate: newHD ? 1_500_000 : 800_000 },
+          videoEncoding: { maxBitrate: quality.maxBitrate },
           videoCodec: 'vp8',
         },
         false,
@@ -1233,7 +1246,7 @@ function GroupLayout() {
             letterSpacing: '0.5px',
             transition: 'background var(--transition), color var(--transition)',
           }}
-          title={isHD ? 'Switch to SD (800kbps)' : 'Switch to HD (1.5Mbps)'}
+          title={isHD ? 'Switch to SD (500kbps)' : 'Switch to HD (1.5Mbps)'}
         >
           {isHD ? 'HD' : 'SD'}
         </button>
@@ -1377,10 +1390,13 @@ export default function RoomPage() {
         video={preJoinCamera}
         audio={preJoinMic}
         options={{
+          videoCaptureDefaults: {
+            resolution: VIDEO_QUALITY.sd.resolution,
+          },
           publishDefaults: {
             videoCodec: 'vp8',
             videoEncoding: {
-              maxBitrate: 800_000,
+              maxBitrate: VIDEO_QUALITY.sd.maxBitrate,
             },
           },
           adaptiveStream: true,
