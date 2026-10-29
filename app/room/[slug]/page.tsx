@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { useCallDataUsage } from '@/lib/hooks/useCallDataUsage';
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -912,6 +913,7 @@ function GroupLayout() {
   const room = useRoomContext();
   const layoutRef = useRef<HTMLDivElement>(null);
   const [isHD, setIsHD] = useState(false);
+  useCallDataUsage(room, isHD);
 
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [isFrontCamera, setIsFrontCamera] = useState(true);
